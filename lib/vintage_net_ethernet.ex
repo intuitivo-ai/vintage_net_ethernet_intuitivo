@@ -41,7 +41,7 @@ defmodule VintageNetEthernet do
   @behaviour VintageNet.Technology
 
   alias VintageNet.Interface.RawConfig
-  alias VintageNet.IP.{DhcpdConfig, IPv4Config}
+  alias VintageNet.IP.{DhcpdConfig, DnsdConfig, IPv4Config}
   alias VintageNetEthernet.Cookbook
   alias VintageNetEthernet.MacAddress
 
@@ -53,6 +53,7 @@ defmodule VintageNetEthernet do
     |> normalize_mac_address()
     |> IPv4Config.normalize()
     |> DhcpdConfig.normalize()
+    |> DnsdConfig.normalize()
   end
 
   defp normalize_mac_address(%{mac_address: mac_address} = config) do
@@ -81,6 +82,7 @@ defmodule VintageNetEthernet do
     |> add_mac_address_config(normalized_config)
     |> IPv4Config.add_config(normalized_config, opts)
     |> DhcpdConfig.add_config(normalized_config, opts)
+    |> DnsdConfig.add_config(normalized_config, opts)
   end
 
   defp add_mac_address_config(raw_config, %{mac_address: mac_address}) do
