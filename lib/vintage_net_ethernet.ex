@@ -43,6 +43,7 @@ defmodule VintageNetEthernet do
   alias VintageNet.Interface.RawConfig
   alias VintageNet.IP.{DhcpdConfig, DnsdConfig, IPv4Config}
   alias VintageNetEthernet.Cookbook
+  alias VintageNetEthernet.DnsForwarder
   alias VintageNetEthernet.MacAddress
 
   require Logger
@@ -53,7 +54,24 @@ defmodule VintageNetEthernet do
     |> normalize_mac_address()
     |> IPv4Config.normalize()
     |> DhcpdConfig.normalize()
-    |> DnsdConfig.normalize()
+    |> normalize_dns(config)
+  end
+
+  defp normalize_dns(config, original) do
+    case original do
+      %{dnsd: %{upstream: _}} ->
+        # Preserve upstream for DnsForwarder; run standard normalize then re-add upstream
+        upstream = original.dnsd[:upstream]
+        normalized = DnsdConfig.normalize(config)
+
+        case normalized do
+          %{dnsd: dnsd} -> %{normalized | dnsd: Map.put(dnsd, :upstream, upstream)}
+          other -> other
+        end
+
+      _ ->
+        DnsdConfig.normalize(config)
+    end
   end
 
   defp normalize_mac_address(%{mac_address: mac_address} = config) do
@@ -82,7 +100,40 @@ defmodule VintageNetEthernet do
     |> add_mac_address_config(normalized_config)
     |> IPv4Config.add_config(normalized_config, opts)
     |> DhcpdConfig.add_config(normalized_config, opts)
-    |> DnsdConfig.add_config(normalized_config, opts)
+    |> add_dns_config(normalized_config, opts)
+  end
+
+  defp add_dns_config(raw_config, %{dnsd: %{upstream: upstream} = dnsd} = config, _opts)
+       when is_list(upstream) and upstream != [] do
+    %{ipv4: %{address: address}} = config
+    port = Map.get(dnsd, :port, 53)
+    ttl = Map.get(dnsd, :ttl, 60)
+    records = Map.get(dnsd, :records, [])
+
+    bind_ip =
+      case address do
+        {_, _, _, _} = ip -> ip
+        str when is_binary(str) -> VintageNet.IP.ip_to_tuple!(str)
+      end
+
+    child_spec =
+      Supervisor.child_spec(
+        {DnsForwarder,
+         [
+           bind_ip: bind_ip,
+           port: port,
+           ttl: ttl,
+           records: records,
+           upstream: upstream
+         ]},
+        id: :dns_forwarder
+      )
+
+    %{raw_config | child_specs: raw_config.child_specs ++ [child_spec]}
+  end
+
+  defp add_dns_config(raw_config, normalized_config, opts) do
+    DnsdConfig.add_config(raw_config, normalized_config, opts)
   end
 
   defp add_mac_address_config(raw_config, %{mac_address: mac_address}) do
